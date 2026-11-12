@@ -1304,6 +1304,12 @@ class RenderStyle:
             fragments that span cell boundaries.  When ``True``,
             each molecule appears only once, keeping the largest
             connected cluster.
+        drop_orphan_copies: Whether to remove unbonded copies of
+            atoms that are drawn bonded elsewhere.  Completing a
+            polyhedron across a periodic boundary draws an image of
+            each vertex next to its centre; this drops the original
+            copy left without bonds on the other side of the cell.
+            Isolated atoms and their boundary images are kept.
 
     Raises:
         ValueError: If *atom_scale* or *bond_scale* are not positive,
@@ -1382,6 +1388,7 @@ class RenderStyle:
     pbc_padding: float | None = 0.1
     max_recursive_depth: int = 5
     deduplicate_molecules: bool = False
+    drop_orphan_copies: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.slab_clip_mode, str):

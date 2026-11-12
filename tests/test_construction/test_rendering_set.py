@@ -832,3 +832,44 @@ class TestRenderingSetWithMixed:
         # All replicated rows should still be the same Composition.
         assert all(site == species[0] for site in rset.species)
         assert all(isinstance(site, Composition) for site in rset.species)
+
+
+class TestDropOrphanCopies:
+    """drop_orphan_copies removes unbonded duplicates only."""
+
+    def _rset(self, species, sources, bonds):
+        from hofmann.construction.rendering_set import RenderingSet
+        from hofmann.model import Bond, BondSpec
+
+        spec = BondSpec(species=("A", "B"), max_length=3.0)
+        n = len(species)
+        return RenderingSet(
+            species=list(species),
+            coords=np.arange(n * 3, dtype=float).reshape(n, 3),
+            bonds=[Bond(a, b, 1.0, spec) for a, b in bonds],
+            source_indices=np.array(sources),
+        )
+
+    def test_removes_unbonded_copy_of_bonded_atom(self):
+        from hofmann.construction.rendering_set import drop_orphan_copies
+
+        # Atom 1 (B) is unbonded; its image 2 is bonded to atom 0.
+        rset = self._rset(["A", "B", "B"], [0, 1, 1], [(0, 2)])
+        out = drop_orphan_copies(rset)
+        assert out.species == ["A", "B"]
+        assert list(out.source_indices) == [0, 1]
+        assert [(b.index_a, b.index_b) for b in out.bonds] == [(0, 1)]
+
+    def test_keeps_isolated_atoms_and_their_images(self):
+        from hofmann.construction.rendering_set import drop_orphan_copies
+
+        # Corner-atom style: physical atom and two padding images, no
+        # bonds anywhere.
+        rset = self._rset(["A", "A", "A"], [0, 0, 0], [])
+        assert drop_orphan_copies(rset) is rset
+
+    def test_keeps_unique_unbonded_atom(self):
+        from hofmann.construction.rendering_set import drop_orphan_copies
+
+        rset = self._rset(["A", "B", "A"], [0, 1, 2], [(0, 1)])
+        assert drop_orphan_copies(rset) is rset

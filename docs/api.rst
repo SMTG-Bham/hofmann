@@ -96,6 +96,14 @@ Rendering
 .. autofunction:: hofmann.rendering.interactive.render_mpl_interactive
 
 
+Automatic bonding
+-----------------
+
+.. automodule:: hofmann.construction.auto_bonding
+   :members: analyse_bonding, apply_overrides, guess_oxidation_states,
+      BondingScheme, PairRule, PairDisplay
+
+
 Colours and defaults
 --------------------
 

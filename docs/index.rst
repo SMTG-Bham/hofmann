@@ -32,6 +32,7 @@ Quick example
    :hidden:
 
    getting-started
+   command-line
    scenes
    rendering
 

@@ -20,6 +20,7 @@ from hofmann.construction.polyhedra import compute_polyhedra
 from hofmann.construction.rendering_set import (
     build_rendering_set,
     deduplicate_molecules,
+    drop_orphan_copies,
 )
 from hofmann.model import (
     AtomStyle,
@@ -209,6 +210,8 @@ def _precompute_scene(
         )
         if rs.deduplicate_molecules:
             rset = deduplicate_molecules(rset, lattice)
+        if rs.drop_orphan_copies:
+            rset = drop_orphan_copies(rset)
         species = tuple(rset.species)
         coords = rset.coords
         bonds = rset.bonds

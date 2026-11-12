@@ -31,6 +31,9 @@ dependencies = [
     "scipy>=1.10",
 ]
 
+[project.scripts]
+hofmann = "hofmann.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/bjmorgan/hofmann"
 Documentation = "https://hofmann.readthedocs.io"

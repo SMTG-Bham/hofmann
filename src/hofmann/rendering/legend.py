@@ -35,6 +35,7 @@ from hofmann.rendering._legend_polyhedra import (
     shade_face,
 )
 from hofmann.rendering._widget_scale import _REFERENCE_WIDGET_PTS
+from hofmann.rendering.shading import _SphereShader
 from hofmann._constants import POLYHEDRON_RADIUS_SCALE
 
 # Multiplier applied to the default entry spacing when any legend label
@@ -288,6 +289,27 @@ def _draw_legend_polyhedron(
         ax.add_collection(pc)
 
 
+def _draw_legend_sphere(
+    ax: Axes,
+    shader: _SphereShader,
+    centre: np.ndarray,
+    radius_data: float,
+    rgb: tuple[float, float, float],
+    alpha: float,
+) -> None:
+    """Draw a glossy legend sphere as stacked shaded layers."""
+    n_layers = len(shader.scales)
+    verts = [
+        (shader.offsets[k] + shader.scales[k] * shader.circles[k])
+        * radius_data + centre
+        for k in range(n_layers)
+    ]
+    colours = [(*shader.colour(rgb, k), alpha) for k in range(n_layers)]
+    ax.add_collection(PolyCollection(
+        verts, closed=True, facecolors=colours, linewidths=0.0, zorder=10,
+    ))
+
+
 def _draw_legend_widget(
     ax: Axes,
     scene: StructureScene,
@@ -297,6 +319,7 @@ def _draw_legend_widget(
     outline_width: float = 1.0,
     polyhedra_shading: float,
     light_direction: np.ndarray,
+    sphere_shader: _SphereShader | None = None,
 ) -> None:
     """Draw a legend widget on *ax*.
 
@@ -321,6 +344,9 @@ def _draw_legend_widget(
             for auto-generated items).  Unused when ``style.items``
             is provided.
         style: Visual style for the widget.
+        sphere_shader: Glossy sphere shader.  When given, circular
+            atom markers are drawn as shaded spheres matching the
+            scene's glossy atoms.
         outline_colour: Outline colour for legend markers, or ``None``
             to disable outlines.
         outline_width: Line width for marker outlines in points.
@@ -469,16 +495,30 @@ def _draw_legend_widget(
             if item.alpha < 1.0:
                 face_colour = (*rgb, item.alpha)
 
-            ax.plot(
-                anchor_x, y_i,
-                marker=marker,
-                markersize=item_radius[i] * 2,
-                markerfacecolor=face_colour,
-                markeredgecolor=resolved_ec if resolved_ec is not None else rgb,
-                markeredgewidth=resolved_ew,
-                linestyle="None",
-                zorder=10,
-            )
+            draw_marker = True
+            if sphere_shader is not None and marker == "o":
+                # Glossy sphere: shaded layers, with the marker kept
+                # only as a transparent-faced outline on top.
+                _draw_legend_sphere(
+                    ax, sphere_shader, np.array([anchor_x, y_i]),
+                    item_radius[i] / pts_per_data, rgb, item.alpha,
+                )
+                face_colour = (0.0, 0.0, 0.0, 0.0)
+                draw_marker = resolved_ec is not None and resolved_ew > 0
+
+            if draw_marker:
+                ax.plot(
+                    anchor_x, y_i,
+                    marker=marker,
+                    markersize=item_radius[i] * 2,
+                    markerfacecolor=face_colour,
+                    markeredgecolor=(
+                        resolved_ec if resolved_ec is not None else rgb
+                    ),
+                    markeredgewidth=resolved_ew,
+                    linestyle="None",
+                    zorder=10,
+                )
 
         # Nudge text down to visually centre with the marker.
         # va="center" includes descender space in the bounding box,

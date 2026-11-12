@@ -300,11 +300,12 @@ def _apply_key_action(
 
 
 def _draw_style(style: RenderStyle) -> RenderStyle:
-    """Return a copy of *style* using the low-fidelity interactive segment counts."""
+    """Return a copy of *style* using the low-fidelity interactive counts."""
     return replace(
         style,
         circle_segments=style.interactive_circle_segments,
         arc_segments=style.interactive_arc_segments,
+        shading_layers=style.interactive_shading_layers,
     )
 
 

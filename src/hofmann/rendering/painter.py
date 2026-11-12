@@ -18,6 +18,7 @@ from hofmann.model import (
     AtomStyle,
     CmapSpec,
     RenderStyle,
+    ShadingMode,
     StructureScene,
     ViewState,
     normalise_colour,
@@ -42,6 +43,14 @@ from hofmann.rendering.projection import (
     _make_vacancy_wedge,
     _make_wedges,
 )
+from hofmann.rendering.shading import (
+    _Lighting,
+    _SphereShader,
+    _bond_layer_verts,
+    _depth_cue,
+    _make_bond_shader,
+    _make_sphere_shader,
+)
 
 # Font size (points) for scene titles rendered inside the viewport.
 _TITLE_FONT_SIZE = 12.0
@@ -60,6 +69,8 @@ def _emit_atom_polygons(
     atom_outline_width: float,
     use_wedges: bool,
     bg_rgb: tuple[float, float, float],
+    shader: _SphereShader | None = None,
+    fog: float = 0.0,
 ) -> tuple[
     list[np.ndarray],
     list[tuple[float, ...]],
@@ -100,18 +111,28 @@ def _emit_atom_polygons(
             (false when colour_by is overriding the row).
         bg_rgb: Normalised canvas background RGB.  Used as the default
             vacancy fill when ``style.vacancy_colour`` is ``None``,
-            ensuring the atom remains visually opaque.
+            ensuring the atom remains visually opaque.  Also the
+            colour that depth cueing blends towards.
+        shader: Glossy sphere shader.  When given, every filled
+            polygon is emitted once per shading layer (shrunk towards
+            the highlight and Phong-lit), and outlines are stroked
+            separately on top.  ``None`` gives flat fills.
+        fog: Depth-cueing amount in ``[0, 1]`` for this atom.
 
     Returns:
         ``(verts, face_cs, edge_cs, line_widths)`` lists, all the
         same length.
     """
-    verts: list[np.ndarray] = []
-    face_cs: list[tuple[float, ...]] = []
-    edge_cs: list[tuple[float, ...]] = []
-    lws: list[float] = []
+    # Filled regions in unit-radius coordinates relative to the atom
+    # centre: (polygon, rgb, lit).  ``lit`` is False for a vacancy
+    # wedge filled with the background, which stays flat.
+    fills: list[tuple[np.ndarray, tuple[float, float, float], bool]] = []
+    # Outline paths (unit coordinates), stroked with a transparent face.
+    strokes: list[np.ndarray] = []
+    pure_site = True
 
     if isinstance(site_content, Composition) and use_wedges:
+        pure_site = False
         wedges = _make_wedges(
             site_content,
             n_segments_total=style.circle_segments,
@@ -133,11 +154,7 @@ def _emit_atom_polygons(
                 wedge_rgb: tuple[float, float, float] = (0.5, 0.5, 0.5)
             else:
                 wedge_rgb = normalise_colour(sp_style.colour)
-            wedge_fc = (*wedge_rgb, 1.0)
-            verts.append(polygon * screen_radius + centre_xy)
-            face_cs.append(wedge_fc)
-            edge_cs.append(wedge_fc)
-            lws.append(0.0)
+            fills.append((polygon, wedge_rgb, True))
 
         vac = _make_vacancy_wedge(
             site_content,
@@ -146,27 +163,19 @@ def _emit_atom_polygons(
         )
         if vac is not None:
             if style.vacancy_colour is not None:
-                vac_rgb = normalise_colour(style.vacancy_colour)
+                fills.append(
+                    (vac, normalise_colour(style.vacancy_colour), True),
+                )
             else:
-                vac_rgb = bg_rgb
-            vac_fc = (*vac_rgb, 1.0)
-            verts.append(vac * screen_radius + centre_xy)
-            face_cs.append(vac_fc)
-            edge_cs.append(vac_fc)
-            lws.append(0.0)
+                fills.append((vac, bg_rgb, False))
 
         if show_outlines and atom_outline_width > 0:
-            edge_fc = (*outline_rgb, 1.0)
-            transparent = (0.0, 0.0, 0.0, 0.0)
             # Outer outline: same closed unit circle as a pure-string
             # site, but with a transparent face so the wedge fills
             # show through.  matplotlib strokes the boundary at
             # ``atom_outline_width`` points, identical in units to
             # the pure-circle path.
-            verts.append(unit_circle * screen_radius + centre_xy)
-            face_cs.append(transparent)
-            edge_cs.append(edge_fc)
-            lws.append(atom_outline_width)
+            strokes.append(unit_circle)
 
             # Radial edges bound every wedge boundary, treating the
             # vacancy fraction as an implicit additional species.
@@ -188,32 +197,63 @@ def _emit_atom_polygons(
                 # is handled by the trailing boundary of the last
                 # wedge below.
                 if has_vacancy:
-                    edge_polygon = np.array([
+                    strokes.append(np.array([
                         [0.0, 0.0],
                         [np.cos(cumulative_angle), np.sin(cumulative_angle)],
-                    ])
-                    verts.append(edge_polygon * screen_radius + centre_xy)
-                    face_cs.append(transparent)
-                    edge_cs.append(edge_fc)
-                    lws.append(atom_outline_width)
+                    ]))
                 # Boundary at the end of each wedge.
                 for sp, _polygon in wedges:
                     cumulative_angle += 2.0 * np.pi * site_content[sp]
-                    edge_polygon = np.array([
+                    strokes.append(np.array([
                         [0.0, 0.0],
                         [np.cos(cumulative_angle), np.sin(cumulative_angle)],
-                    ])
-                    verts.append(edge_polygon * screen_radius + centre_xy)
-                    face_cs.append(transparent)
-                    edge_cs.append(edge_fc)
-                    lws.append(atom_outline_width)
+                    ]))
     else:
-        verts.append(unit_circle * screen_radius + centre_xy)
-        face_cs.append(fallback_face_colour)
-        edge_cs.append(
-            (*outline_rgb, 1.0) if show_outlines else fallback_face_colour
-        )
-        lws.append(atom_outline_width if show_outlines else 0.0)
+        fills.append((unit_circle, tuple(fallback_face_colour[:3]), True))
+
+    alpha = fallback_face_colour[3] if pure_site else 1.0
+    outline_rgba = (*_depth_cue(outline_rgb, fog, bg_rgb), 1.0)
+
+    verts: list[np.ndarray] = []
+    face_cs: list[tuple[float, ...]] = []
+    edge_cs: list[tuple[float, ...]] = []
+    lws: list[float] = []
+
+    if shader is None:
+        for polygon, rgb, _lit in fills:
+            fc = (*_depth_cue(rgb, fog, bg_rgb), alpha)
+            verts.append(polygon * screen_radius + centre_xy)
+            face_cs.append(fc)
+            if pure_site:
+                edge_cs.append(outline_rgba if show_outlines else fc)
+                lws.append(atom_outline_width if show_outlines else 0.0)
+            else:
+                edge_cs.append(fc)
+                lws.append(0.0)
+    else:
+        for i in range(len(shader.scales)):
+            offset = shader.offsets[i]
+            scale = shader.scales[i]
+            for polygon, rgb, lit in fills:
+                if pure_site:
+                    polygon = shader.circles[i]
+                layer_rgb = shader.colour(rgb, i) if lit else rgb
+                fc = (*_depth_cue(layer_rgb, fog, bg_rgb), alpha)
+                verts.append(
+                    (offset + scale * polygon) * screen_radius + centre_xy,
+                )
+                face_cs.append(fc)
+                edge_cs.append(fc)
+                lws.append(0.0)
+        if pure_site and show_outlines and atom_outline_width > 0:
+            strokes.append(unit_circle)
+
+    transparent = (0.0, 0.0, 0.0, 0.0)
+    for path in strokes:
+        verts.append(path * screen_radius + centre_xy)
+        face_cs.append(transparent)
+        edge_cs.append(outline_rgba)
+        lws.append(atom_outline_width)
 
     return verts, face_cs, edge_cs, lws
 
@@ -286,6 +326,14 @@ def _draw_scene(
     polyhedra_shading = style.polyhedra_shading
     light_dir = np.asarray(style.light_direction, dtype=float)
     light_dir = light_dir / np.linalg.norm(light_dir)
+    glossy = style.shading == ShadingMode.GLOSSY
+    lighting = _Lighting.from_style(style)
+    sphere_shader = (
+        _make_sphere_shader(
+            lighting, style.shading_layers, style.circle_segments,
+        )
+        if glossy else None
+    )
     # Remove previous draw's collection(s) and leftover artists.
     while ax.collections:
         ax.collections[0].remove()
@@ -316,6 +364,13 @@ def _draw_scene(
 
     # ---- Sort atoms back-to-front (furthest first) ----
     order = np.argsort(depth)
+
+    # ---- Depth cueing: fade distant atoms towards the background ----
+    fog = np.zeros(len(depth))
+    if style.depth_cueing > 0.0 and len(depth) > 1:
+        depth_span = float(depth.max() - depth.min())
+        if depth_span > 1e-12:
+            fog = style.depth_cueing * (depth.max() - depth) / depth_span
 
     # ---- Slab visibility ----
     slab_visible = view.slab_mask(coords)
@@ -355,6 +410,12 @@ def _draw_scene(
                 batch_full_verts, batch_start_2d, batch_end_2d,
                 batch_bb_a, batch_bb_b, batch_bx, batch_by, n_arc,
             )
+    bond_shader = None
+    if glossy and show_bonds and len(bond_ia) > 0:
+        bond_shader = _make_bond_shader(
+            lighting, max(1, style.shading_layers // 2),
+            batch_bx, batch_by,
+        )
 
     # Pre-compute bond spec colours for the non-half-bond path.
     if not use_half:
@@ -373,6 +434,10 @@ def _draw_scene(
     face_by_depth_slot, vertex_max_face_slot = _collect_polyhedra_faces(
         precomputed, polyhedra_list, poly_skip, slab_visible,
         show_polyhedra, polyhedra_shading, light_dir, rotated, depth, xy, order,
+        lighting=lighting if glossy else None,
+        polyhedra_specular=style.polyhedra_specular,
+        fog=fog,
+        bg_rgb=bg_rgb,
     )
 
     # Defer vertex atoms so they paint after all their connected
@@ -435,6 +500,42 @@ def _draw_scene(
     line_widths: list[float] = []
 
     drawn_bonds: set[int] = set()
+    transparent = (0.0, 0.0, 0.0, 0.0)
+
+    def emit_bond(
+        verts: np.ndarray,
+        rgb: tuple[float, float, float],
+        bi: int,
+        bond_fog: float,
+    ) -> None:
+        """Append one bond (or half-bond) polygon, flat or glossy."""
+        outline = (*_depth_cue(outline_rgb, bond_fog, bg_rgb), 1.0)
+        if bond_shader is None:
+            fc = (*_depth_cue(rgb, bond_fog, bg_rgb), 1.0)
+            all_verts.append(verts)
+            face_colours.append(fc)
+            edge_colours.append(outline if show_outlines else fc)
+            line_widths.append(bond_outline_width if show_outlines else 0.0)
+            return
+        origin = batch_start_2d[bi]
+        bx, by = batch_bx[bi], batch_by[bi]
+        for i in range(len(bond_shader.scales)):
+            fc = (
+                *_depth_cue(bond_shader.colour(rgb, i, bi), bond_fog, bg_rgb),
+                1.0,
+            )
+            all_verts.append(_bond_layer_verts(
+                verts, origin, bx, by,
+                bond_shader.scales[i], bond_shader.shifts[i, bi],
+            ))
+            face_colours.append(fc)
+            edge_colours.append(fc)
+            line_widths.append(0.0)
+        if show_outlines and bond_outline_width > 0:
+            all_verts.append(verts)
+            face_colours.append(transparent)
+            edge_colours.append(outline)
+            line_widths.append(bond_outline_width)
 
     # ---- Paint back-to-front ----
     for order_pos, k in enumerate(order):
@@ -480,36 +581,20 @@ def _draw_scene(
                 if not batch_valid[bi]:
                     continue
 
+                bond_fog = 0.5 * (fog[ia] + fog[ib])
                 if use_half and bond_half_colours[ia] != bond_half_colours[ib]:
-                    fc_a = (*bond_half_colours[ia], 1.0)
-                    all_verts.append(batch_half_a[bi])
-                    face_colours.append(fc_a)
-                    edge_colours.append(
-                        (*outline_rgb, 1.0) if show_outlines else fc_a,
+                    emit_bond(
+                        batch_half_a[bi], bond_half_colours[ia], bi, bond_fog,
                     )
-                    line_widths.append(
-                        bond_outline_width if show_outlines else 0.0,
-                    )
-                    fc_b = (*bond_half_colours[ib], 1.0)
-                    all_verts.append(batch_half_b[bi])
-                    face_colours.append(fc_b)
-                    edge_colours.append(
-                        (*outline_rgb, 1.0) if show_outlines else fc_b,
-                    )
-                    line_widths.append(
-                        bond_outline_width if show_outlines else 0.0,
+                    emit_bond(
+                        batch_half_b[bi], bond_half_colours[ib], bi, bond_fog,
                     )
                 elif use_half:
                     # Same colour on both halves — draw as single polygon
                     # to avoid a spurious outline at the midpoint.
-                    fc = (*bond_half_colours[ia], 1.0)
-                    all_verts.append(batch_full_verts[bi])
-                    face_colours.append(fc)
-                    edge_colours.append(
-                        (*outline_rgb, 1.0) if show_outlines else fc,
-                    )
-                    line_widths.append(
-                        bond_outline_width if show_outlines else 0.0,
+                    emit_bond(
+                        batch_full_verts[bi], bond_half_colours[ia], bi,
+                        bond_fog,
                     )
                 else:
                     spec_id = id(bond.spec)
@@ -519,17 +604,9 @@ def _draw_scene(
                         else:
                             brgb = normalise_colour(bond.spec.colour)
                         bond_spec_colours[spec_id] = brgb
-                    brgb = bond_spec_colours[spec_id]
-
-                    all_verts.append(batch_full_verts[bi])
-                    face_colours.append((*brgb, 1.0))
-                    edge_colours.append(
-                        (*outline_rgb, 1.0)
-                        if show_outlines
-                        else (*brgb, 1.0),
-                    )
-                    line_widths.append(
-                        bond_outline_width if show_outlines else 0.0,
+                    emit_bond(
+                        batch_full_verts[bi], bond_spec_colours[spec_id], bi,
+                        bond_fog,
                     )
 
         # Draw polyhedron faces assigned to this depth slot.
@@ -564,6 +641,8 @@ def _draw_scene(
                 atom_outline_width=atom_outline_width,
                 use_wedges=use_wedges,
                 bg_rgb=bg_rgb,
+                shader=sphere_shader,
+                fog=fog[vi],
             )
             all_verts.extend(verts_out)
             face_colours.extend(faces_out)
@@ -591,6 +670,8 @@ def _draw_scene(
                 atom_outline_width=atom_outline_width,
                 use_wedges=use_wedges,
                 bg_rgb=bg_rgb,
+                shader=sphere_shader,
+                fog=fog[k],
             )
             all_verts.extend(verts_out)
             face_colours.extend(faces_out)
@@ -633,6 +714,8 @@ def _draw_scene(
             atom_outline_width=atom_outline_width,
             use_wedges=use_wedges,
             bg_rgb=bg_rgb,
+            shader=sphere_shader,
+            fog=fog[vi],
         )
         all_verts.extend(verts_out)
         face_colours.extend(faces_out)
@@ -721,6 +804,7 @@ def _draw_scene(
             outline_width=atom_outline_width,
             polyhedra_shading=polyhedra_shading,
             light_direction=light_dir,
+            sphere_shader=sphere_shader,
         )
 
 

@@ -86,6 +86,9 @@ Rendering
 .. autoclass:: SlabClipMode
    :members:
 
+.. autoclass:: ShadingMode
+   :members:
+
 .. autofunction:: hofmann.rendering.static.render_mpl
 
 .. autofunction:: hofmann.rendering.static.render_legend

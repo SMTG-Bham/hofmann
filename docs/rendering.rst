@@ -168,6 +168,63 @@ top-down viewing angles.
 
           ``polyhedra_shading=1.0`` (Lambertian)
 
+Glossy shading
+~~~~~~~~~~~~~~
+
+By default hofmann draws atoms and bonds with flat fills, in the style
+of XBS.  Set ``shading="glossy"`` to light them instead, so that atoms
+read as shiny spheres and bonds as cylinders, with a white specular
+highlight.  Polyhedron faces then also receive a (weaker) specular
+term.  The result is similar in appearance to the shaded images
+produced by common crystal-structure viewers such as VESTA.
+
+:meth:`RenderStyle.glossy() <hofmann.RenderStyle.glossy>` is a preset
+that combines glossy shading with no outlines on atoms and bonds,
+thin dark polyhedron edges, half-bond colouring, and light depth
+cueing:
+
+.. code-block:: python
+
+   from hofmann import RenderStyle
+
+   scene.render_mpl("glossy.png", dpi=300, style=RenderStyle.glossy())
+
+   # Any field can be overridden:
+   style = RenderStyle.glossy(depth_cueing=0.0, specular=0.4)
+
+.. list-table::
+   :widths: 50 50
+
+   * - .. figure:: _static/llzo_flat.png
+
+          ``shading="flat"`` (default)
+
+     - .. figure:: _static/llzo_glossy.png
+
+          ``RenderStyle.glossy()``
+
+Lighting follows the Blinn--Phong model,
+``colour = base * (ambient + diffuse * n.L) + specular * (n.H) ** shininess``,
+with the light along ``light_direction`` (by default from the
+viewer).  The defaults are ``ambient=0.45``, ``diffuse=0.55``,
+``specular=0.7``, and ``shininess=26``.  Lower ``specular`` for a
+satin finish, or set it to
+``0.0`` for matte spheres.  An off-axis ``light_direction`` such as
+``(-0.4, 0.5, 1.0)`` moves the highlight towards the upper left.
+``polyhedra_specular`` scales the highlight on polyhedron faces.
+
+``depth_cueing`` (``0.0`` to ``1.0``) fades atoms, bonds, and faces at
+the back of the scene towards the background colour, which helps
+separate layers in dense structures.  It works with flat shading too.
+
+Glossy atoms are built from ``shading_layers`` nested, filled polygons
+(``interactive_shading_layers`` in the interactive viewer), so output
+stays fully vector in SVG and PDF.  Raise ``shading_layers`` if bands
+are visible in very large renders; lower it to make vector files
+smaller.  Glossy SVG files are typically ten to fifteen times larger
+than flat ones, so PNG at ``dpi=300`` is often the most practical
+format for glossy figures.
+
 
 Overlays and widgets
 --------------------

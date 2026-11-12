@@ -37,6 +37,27 @@ class SlabClipMode(StrEnum):
     INCLUDE_WHOLE = "include_whole"
 
 
+class ShadingMode(StrEnum):
+    """How atoms, bonds, and polyhedron faces are lit.
+
+    Attributes:
+        FLAT: Atoms and bonds are filled with a single flat colour,
+            in the style of XBS.  Polyhedron faces use a simple
+            Lambertian dimming controlled by
+            :attr:`RenderStyle.polyhedra_shading`.
+        GLOSSY: Atoms and bonds are drawn as Phong-lit spheres and
+            cylinders with a specular highlight, and polyhedron faces
+            receive diffuse and specular lighting.  The lighting is
+            controlled by
+            :attr:`RenderStyle.ambient`, :attr:`RenderStyle.diffuse`,
+            :attr:`RenderStyle.specular`, and
+            :attr:`RenderStyle.shininess`.
+    """
+
+    FLAT = "flat"
+    GLOSSY = "glossy"
+
+
 class WidgetCorner(StrEnum):
     """Which corner of the viewport to place a widget.
 
@@ -1213,6 +1234,33 @@ class RenderStyle:
             polyhedra face shading, in screen space (x = right,
             y = up, z = towards viewer).  Normalised internally
             before use.  The zero vector is rejected.
+        shading: Lighting model for atoms, bonds, and polyhedron
+            faces.  ``"flat"`` (the default) gives XBS-style flat
+            fills; ``"glossy"`` gives Phong-lit spheres and
+            cylinders with a specular highlight.  See
+            :class:`ShadingMode`.
+        ambient: Ambient light level for glossy shading.  The darkest
+            part of a sphere has this fraction of its base colour.
+        diffuse: Diffuse (Lambertian) light strength for glossy
+            shading.  Surfaces facing the light directly reach
+            ``ambient + diffuse`` times their base colour.
+        specular: Strength of the white specular highlight for glossy
+            shading.  ``0.0`` gives matte surfaces.
+        shininess: Phong exponent for glossy shading.  Larger values
+            give smaller, sharper highlights.
+        polyhedra_specular: Multiplier on *specular* for polyhedron
+            faces in glossy mode.  Flat faces facing the light would
+            otherwise wash out entirely.
+        shading_layers: Number of nested layers used to build each
+            glossy atom and bond in static output.  More layers give
+            smoother gradients at the cost of larger vector files.
+        interactive_shading_layers: Number of glossy shading layers
+            in the interactive viewer.
+        depth_cueing: Strength of depth cueing (fog), in ``[0, 1]``.
+            Atoms, bonds, and faces at the back of the scene are
+            blended towards the background colour by up to this
+            fraction.  ``0.0`` (the default) disables it.  Applies in
+            both flat and glossy modes.
         polyhedra_outline_width: Global override for polyhedra outline
             line width (points).  When ``None`` (the default), each
             polyhedron uses its own ``PolyhedronSpec.edge_width``.
@@ -1265,8 +1313,10 @@ class RenderStyle:
             *arc_segments* or *interactive_arc_segments* < 2,
             *polyhedra_shading* is outside ``[0, 1]``,
             *light_direction* does not have exactly 3 components or
-            is the zero vector, or *polyhedra_outline_width* is
-            negative.
+            is the zero vector, *polyhedra_outline_width* is
+            negative, any glossy lighting coefficient is negative,
+            *shading_layers* or *interactive_shading_layers* < 1, or
+            *depth_cueing* is outside ``[0, 1]``.
     """
 
     atom_scale: float = 0.5
@@ -1312,6 +1362,15 @@ class RenderStyle:
     interactive_arc_segments: int = 5
     polyhedra_shading: float = 1.0
     light_direction: tuple[float, float, float] = (0.0, 0.0, 1.0)
+    shading: ShadingMode = ShadingMode.FLAT
+    ambient: float = 0.45
+    diffuse: float = 0.55
+    specular: float = 0.7
+    shininess: float = 26.0
+    polyhedra_specular: float = 0.35
+    shading_layers: int = 32
+    interactive_shading_layers: int = 8
+    depth_cueing: float = 0.0
     polyhedra_outline_width: float | None = None
     show_cell: bool | None = None
     cell_style: CellEdgeStyle = field(default_factory=CellEdgeStyle)
@@ -1327,6 +1386,30 @@ class RenderStyle:
     def __post_init__(self) -> None:
         if isinstance(self.slab_clip_mode, str):
             self.slab_clip_mode = SlabClipMode(self.slab_clip_mode)
+        if isinstance(self.shading, str):
+            self.shading = ShadingMode(self.shading)
+        for name in (
+            "ambient", "diffuse", "specular", "shininess",
+            "polyhedra_specular",
+        ):
+            if getattr(self, name) < 0:
+                raise ValueError(
+                    f"{name} must be non-negative, got {getattr(self, name)}"
+                )
+        if self.shading_layers < 1:
+            raise ValueError(
+                f"shading_layers must be >= 1, got {self.shading_layers}"
+            )
+        if self.interactive_shading_layers < 1:
+            raise ValueError(
+                f"interactive_shading_layers must be >= 1, "
+                f"got {self.interactive_shading_layers}"
+            )
+        if not 0.0 <= self.depth_cueing <= 1.0:
+            raise ValueError(
+                f"depth_cueing must be between 0.0 and 1.0, "
+                f"got {self.depth_cueing}"
+            )
         if self.atom_scale <= 0:
             raise ValueError(f"atom_scale must be positive, got {self.atom_scale}")
         if self.bond_scale <= 0:
@@ -1410,7 +1493,7 @@ class RenderStyle:
             elif field_name == "bond_colour":
                 if val is not None:
                     d[field_name] = list(normalise_colour(val))
-            elif field_name == "slab_clip_mode":
+            elif field_name in ("slab_clip_mode", "shading"):
                 if val != default:
                     d[field_name] = val.value
             elif field_name == "light_direction":
@@ -1446,6 +1529,8 @@ class RenderStyle:
                 val = d[field_name]
                 if field_name == "slab_clip_mode" and isinstance(val, str):
                     val = SlabClipMode(val)
+                elif field_name == "shading" and isinstance(val, str):
+                    val = ShadingMode(val)
                 elif field_name == "bond_colour" and isinstance(val, list):
                     val = tuple(val)
                 elif field_name == "outline_colour" and isinstance(val, list):
@@ -1459,4 +1544,36 @@ class RenderStyle:
             kwargs["axes_style"] = AxesStyle.from_dict(d["axes_style"])
         if "legend_style" in d:
             kwargs["legend_style"] = LegendStyle.from_dict(d["legend_style"])
+        return cls(**kwargs)
+
+    @classmethod
+    def glossy(cls, **overrides: object) -> RenderStyle:
+        """Return a preset glossy style.
+
+        Atoms and bonds are drawn as shiny Phong-lit spheres and
+        cylinders lit from the viewer, without black outlines, with
+        half-bond colouring and light depth cueing.  Polyhedra keep
+        thin dark edges.
+
+        Any :class:`RenderStyle` field can be overridden by keyword::
+
+            style = RenderStyle.glossy(atom_scale=0.4, depth_cueing=0.0)
+
+        Args:
+            **overrides: Field values that replace the preset's.
+
+        Returns:
+            A new :class:`RenderStyle`.
+        """
+        kwargs: dict = {
+            "shading": ShadingMode.GLOSSY,
+            "show_outlines": True,
+            "atom_outline_width": 0.0,
+            "bond_outline_width": 0.0,
+            "polyhedra_outline_width": 0.6,
+            "outline_colour": (0.2, 0.2, 0.2),
+            "half_bonds": True,
+            "depth_cueing": 0.25,
+        }
+        kwargs.update(overrides)
         return cls(**kwargs)

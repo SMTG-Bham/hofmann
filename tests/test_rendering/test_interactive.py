@@ -751,6 +751,7 @@ class TestDrawFidelity:
 
         assert copy.circle_segments == original.interactive_circle_segments
         assert copy.arc_segments == original.interactive_arc_segments
+        assert copy.shading_layers == original.interactive_shading_layers
         assert original.circle_segments == 90
         assert original.arc_segments == 20
         assert copy is not original

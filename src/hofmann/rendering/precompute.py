@@ -34,6 +34,7 @@ from hofmann.model._util import _site_species
 from hofmann.model.colour import _resolve_atom_colours
 from hofmann.model.composition import Composition
 from hofmann._constants import DEFAULT_ATOM_RADIUS
+from hofmann.rendering.shading import _Lighting, _depth_cue, _face_colour
 
 
 @dataclass(frozen=True)
@@ -412,6 +413,11 @@ def _collect_polyhedra_faces(
     depth: np.ndarray,
     xy: np.ndarray,
     order: np.ndarray,
+    *,
+    lighting: _Lighting | None = None,
+    polyhedra_specular: float = 0.0,
+    fog: np.ndarray | None = None,
+    bg_rgb: tuple[float, float, float] = (1.0, 1.0, 1.0),
 ) -> tuple[
     dict[int, list[tuple[np.ndarray, tuple, tuple, float, float]]],
     dict[int, int],
@@ -419,6 +425,11 @@ def _collect_polyhedra_faces(
     """Build per-face draw data and assign each face to a depth slot.
 
     Each face is slotted at its mean vertex depth.
+
+    When *lighting* is given (glossy mode), faces are Phong-lit with
+    diffuse and specular terms instead of the flat-mode Lambertian
+    dimming.  When *fog* is given, each face (and its edge) is blended
+    towards *bg_rgb* by the mean depth-cueing amount of its vertices.
 
     Returns:
         Tuple of ``(face_by_depth_slot, vertex_max_face_slot)`` where
@@ -460,12 +471,30 @@ def _collect_polyhedra_faces(
                 face_verts[2] - face_verts[0],
             )
             norm_len = np.linalg.norm(normal)
-            if norm_len > 1e-12:
-                cos_angle = abs(np.dot(normal, light_direction) / norm_len)
+            if lighting is not None:
+                unit_normal = (
+                    normal / norm_len if norm_len > 1e-12
+                    else np.array([0.0, 0.0, 1.0])
+                )
+                shaded = _face_colour(
+                    lighting, base_rgb, unit_normal,
+                    polyhedra_shading, polyhedra_specular,
+                )
             else:
-                cos_angle = 0.0
-            shading = 1.0 - polyhedra_shading * 0.6 * (1.0 - cos_angle)
-            shaded = tuple(min(1.0, c * shading) for c in base_rgb)
+                if norm_len > 1e-12:
+                    cos_angle = abs(
+                        np.dot(normal, light_direction) / norm_len
+                    )
+                else:
+                    cos_angle = 0.0
+                shading = 1.0 - polyhedra_shading * 0.6 * (1.0 - cos_angle)
+                shaded = tuple(min(1.0, c * shading) for c in base_rgb)
+            face_edge_rgb = edge_rgb
+            if fog is not None:
+                face_fog = float(np.mean(fog[global_idx]))
+                if face_fog > 0.0:
+                    shaded = _depth_cue(shaded, face_fog, bg_rgb)
+                    face_edge_rgb = _depth_cue(edge_rgb, face_fog, bg_rgb)
 
             face_depth = np.mean(depth[global_idx])
             verts_2d = xy[global_idx]
@@ -475,7 +504,7 @@ def _collect_polyhedra_faces(
             face_by_depth_slot[slot].append((
                 verts_2d,
                 (*shaded, alpha),
-                (*edge_rgb, 1.0),
+                (*face_edge_rgb, 1.0),
                 edge_w,
                 float(face_depth),
             ))

@@ -4,6 +4,24 @@ Changelog
 Unreleased
 ----------
 
+- New glossy shading mode: ``RenderStyle(shading="glossy")`` draws
+  atoms as Phong-lit spheres and bonds as lit cylinders with a
+  specular highlight, and adds specular lighting to polyhedron faces.
+  Output stays vector (SVG/PDF).  Lighting is controlled by the new
+  ``ambient``, ``diffuse``, ``specular``, ``shininess``, and
+  ``polyhedra_specular`` fields.  ``shading_layers`` and
+  ``interactive_shading_layers`` set the gradient smoothness.
+
+- New :meth:`RenderStyle.glossy() <hofmann.RenderStyle.glossy>` preset:
+  glossy shading, no atom or bond outlines, thin polyhedron edges, and
+  light depth cueing.
+
+- New ``depth_cueing`` field on :class:`~hofmann.RenderStyle` fades
+  distant atoms, bonds, and polyhedron faces towards the background.
+  Works with both flat and glossy shading.  Off by default.
+
+- New :class:`~hofmann.ShadingMode` enum.
+
 0.21.1
 ------
 

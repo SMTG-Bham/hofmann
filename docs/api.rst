@@ -86,11 +86,22 @@ Rendering
 .. autoclass:: SlabClipMode
    :members:
 
+.. autoclass:: ShadingMode
+   :members:
+
 .. autofunction:: hofmann.rendering.static.render_mpl
 
 .. autofunction:: hofmann.rendering.static.render_legend
 
 .. autofunction:: hofmann.rendering.interactive.render_mpl_interactive
+
+
+Automatic bonding
+-----------------
+
+.. automodule:: hofmann.construction.auto_bonding
+   :members: analyse_bonding, apply_overrides, guess_oxidation_states,
+      BondingScheme, PairRule, PairDisplay
 
 
 Colours and defaults

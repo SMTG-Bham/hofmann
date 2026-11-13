@@ -806,8 +806,46 @@ def deduplicate_molecules(
         if rset.source_indices[i] == i or i in bonded_in_kept
     }
 
-    # --- Build output with remapped indices ---
-    if len(keep_atoms) == n:
+    return _subset_rendering_set(rset, keep_atoms)
+
+
+def drop_orphan_copies(rset: RenderingSet) -> RenderingSet:
+    """Remove unbonded copies of atoms that are drawn bonded elsewhere.
+
+    Completing polyhedra (or bond shells) across periodic boundaries
+    draws a periodic image of an atom next to the centre it bonds to.
+    The original copy on the other side of the cell is then left with
+    no bonds -- for example a free S beside a PS4 tetrahedron that
+    already includes that S.  This removes such copies.
+
+    An unbonded atom is kept when no copy of it has bonds, so isolated
+    atoms (and their boundary images, such as the eight corner atoms
+    of a unit cell) are unaffected.
+
+    Args:
+        rset: The rendering set to prune.
+
+    Returns:
+        A new :class:`RenderingSet` without the orphaned copies, or
+        *rset* itself when nothing is removed.
+    """
+    bonded: set[int] = set()
+    for bond in rset.bonds:
+        bonded.add(bond.index_a)
+        bonded.add(bond.index_b)
+    bonded_sources = {int(rset.source_indices[i]) for i in bonded}
+    keep = {
+        i for i in range(len(rset.species))
+        if i in bonded or int(rset.source_indices[i]) not in bonded_sources
+    }
+    return _subset_rendering_set(rset, keep)
+
+
+def _subset_rendering_set(
+    rset: RenderingSet, keep_atoms: set[int],
+) -> RenderingSet:
+    """Restrict *rset* to *keep_atoms*, remapping bond indices."""
+    if len(keep_atoms) == len(rset.species):
         return rset  # Nothing to remove.
 
     keep_list = sorted(keep_atoms)

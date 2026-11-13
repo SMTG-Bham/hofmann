@@ -547,6 +547,21 @@ def generate_docs_images() -> None:
     )
     print(f"  wrote {OUT / 'llzo.svg'}")
 
+    # Flat vs glossy shading on LLZO.  PNG rather than
+    # SVG: glossy vector output is large.
+    glossy_base = dict(
+        slab_clip_mode="include_whole", show_axes=False,
+    )
+    llzo.render_mpl(
+        OUT / "llzo_flat.png", figsize=(4, 4), dpi=150,
+        style=RenderStyle(half_bonds=False, **glossy_base),
+    )
+    llzo.render_mpl(
+        OUT / "llzo_glossy.png", figsize=(4, 4), dpi=150,
+        style=RenderStyle.glossy(half_bonds=False, **glossy_base),
+    )
+    print(f"  wrote {OUT / 'llzo_flat.png'}, {OUT / 'llzo_glossy.png'}")
+
     # --- Visual examples for user guide settings ---
 
     # 1. Polyhedra shading: flat vs full Lambertian

@@ -61,6 +61,26 @@ pip install "hofmann[animation]"
 
 ## Quick start
 
+### From the command line
+
+With pymatgen installed, the `hofmann` command renders structure files
+straight to images:
+
+```bash
+hofmann                                     # every CIF/POSCAR/.vasp file here
+hofmann Li3PS4.cif                          # Li3PS4_{x,y,z,w}.png
+hofmann x P S Li3PS4.cif                    # P-S polyhedra, [100] view only
+hofmann x P S svg Li3PS4.cif                # the same, as SVG
+hofmann Li3PS4.cif --poly P S --nobond Li S
+```
+
+Views are `x` = [100], `y` = [010], `z` = [001] and `w` = oblique;
+all four are drawn unless you name some.
+
+For ionic compounds it picks polyhedra, bonds, and unbonded cations
+automatically from a rough bond-strength estimate.  See the
+[command-line guide](https://hofmann.readthedocs.io/en/latest/command-line.html).
+
 ### From an XBS file
 
 ```python

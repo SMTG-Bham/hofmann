@@ -4,6 +4,51 @@ Changelog
 Unreleased
 ----------
 
+- New glossy shading mode: ``RenderStyle(shading="glossy")`` draws
+  atoms as Phong-lit spheres and bonds as lit cylinders with a
+  specular highlight, and adds specular lighting to polyhedron faces.
+  Output stays vector (SVG/PDF).  Lighting is controlled by the new
+  ``ambient``, ``diffuse``, ``specular``, ``shininess``, and
+  ``polyhedra_specular`` fields.  ``shading_layers`` and
+  ``interactive_shading_layers`` set the gradient smoothness.
+
+- New :meth:`RenderStyle.glossy() <hofmann.RenderStyle.glossy>` preset:
+  glossy shading, no atom or bond outlines, thin polyhedron edges, and
+  light depth cueing.
+
+- New ``depth_cueing`` field on :class:`~hofmann.RenderStyle` fades
+  distant atoms, bonds, and polyhedron faces towards the background.
+  Works with both flat and glossy shading.  Off by default.
+
+- New :class:`~hofmann.ShadingMode` enum.
+
+- New ``hofmann`` command (also ``python -m hofmann``) that renders
+  CIF and VASP POSCAR/CONTCAR files to images: run it with no
+  arguments to render every structure file in the current directory,
+  or pass files and directories.  Each structure is drawn along
+  [100], [010], [001], and an oblique direction by default; a view
+  word such as ``x`` or ``xz`` picks a subset, and arguments can be
+  given in any order (``hofmann x P S svg Li3PS4.cif``), including
+  the image format(s) ``png``, ``svg``, ``pdf``.  For ionic
+  compounds it estimates
+  bond strengths from guessed oxidation states (``|q1*q2|/d``) and
+  chooses polyhedra, bonds, or no bonds per cation; like charges
+  never bond, and metals show all nearest-neighbour bonds.  Choices
+  can be overridden with ``--poly``, ``--bond``, and ``--nobond``
+  (or a trailing element pair, e.g. ``hofmann Li3PS4.cif P S``), and
+  element colours can be set in a ``hofmann_colours.yaml`` file.
+  See :doc:`command-line`.
+
+- New :func:`~hofmann.construction.auto_bonding.analyse_bonding` for
+  the same automatic bond and polyhedron choice from Python.
+
+- New ``drop_orphan_copies`` field on :class:`~hofmann.RenderStyle`.
+  When a polyhedron is completed across a periodic boundary, the
+  original copy of each borrowed vertex is otherwise left floating,
+  unbonded, on the other side of the cell; this removes those copies
+  while keeping atoms that have no bonds anywhere.  Off by default;
+  the ``hofmann`` command turns it on.
+
 0.21.1
 ------
 
